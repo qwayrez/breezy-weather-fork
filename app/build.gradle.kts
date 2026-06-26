@@ -23,9 +23,9 @@ configure<ApplicationExtension> {
     namespace = "org.breezyweather"
 
     defaultConfig {
-        applicationId = "org.breezyweather"
-        versionCode = 60201
-        versionName = "6.2.1"
+        applicationId = "com.jiaoxiang.jxweather"
+        versionCode = 10060201
+        versionName = "6.2.1-custom.1"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

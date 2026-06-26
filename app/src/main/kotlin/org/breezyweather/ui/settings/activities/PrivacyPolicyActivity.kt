@@ -105,13 +105,7 @@ class PrivacyPolicyActivity : BreezyActivity() {
                             summary = url,
                             isFirst = true
                         ) {
-                            if (url.startsWith("https://") &&
-                                (
-                                    !url.contains("breezy", ignoreCase = true) ||
-                                        BreezyWeather.instance.isSignedByBreezy ||
-                                        BreezyWeather.instance.debugMode
-                                    )
-                            ) {
+                            if (url.startsWith("https://")) {
                                 uriHandler.openUri(url)
                             }
                         }
