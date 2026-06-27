@@ -21,6 +21,7 @@ import android.graphics.Color
 import androidx.annotation.ColorInt
 import breezyweather.domain.location.model.Location
 import breezyweather.domain.source.SourceFeature
+import breezyweather.domain.weather.model.AirQuality
 import breezyweather.domain.weather.model.Alert
 import breezyweather.domain.weather.model.Minutely
 import breezyweather.domain.weather.model.Precipitation
@@ -29,6 +30,7 @@ import breezyweather.domain.weather.model.UV
 import breezyweather.domain.weather.model.Wind
 import breezyweather.domain.weather.reference.AlertSeverity
 import breezyweather.domain.weather.reference.WeatherCode
+import breezyweather.domain.weather.wrappers.AirQualityWrapper
 import breezyweather.domain.weather.wrappers.CurrentWrapper
 import breezyweather.domain.weather.wrappers.DailyWrapper
 import breezyweather.domain.weather.wrappers.HalfDayWrapper
@@ -44,6 +46,8 @@ import org.breezyweather.common.preference.EditTextPreference
 import org.breezyweather.common.preference.Preference
 import org.breezyweather.common.utils.ISO8601Utils
 import org.breezyweather.domain.settings.SourceConfigStore
+import org.breezyweather.sources.qweather.json.QWeatherAirQualityPollutant
+import org.breezyweather.sources.qweather.json.QWeatherAirQualityResult
 import org.breezyweather.sources.qweather.json.QWeatherDaily
 import org.breezyweather.sources.qweather.json.QWeatherDailyResult
 import org.breezyweather.sources.qweather.json.QWeatherHourly
@@ -51,8 +55,12 @@ import org.breezyweather.sources.qweather.json.QWeatherHourlyResult
 import org.breezyweather.sources.qweather.json.QWeatherMinutelyResult
 import org.breezyweather.sources.qweather.json.QWeatherNow
 import org.breezyweather.sources.qweather.json.QWeatherNowResult
+import org.breezyweather.sources.qweather.json.QWeatherWarning
+import org.breezyweather.sources.qweather.json.QWeatherWarningColor
 import org.breezyweather.sources.qweather.json.QWeatherWarningResult
 import org.breezyweather.unit.distance.Distance.Companion.kilometers
+import org.breezyweather.unit.pollutant.PollutantConcentration
+import org.breezyweather.unit.pollutant.PollutantConcentration.Companion.microgramsPerCubicMeter
 import org.breezyweather.unit.precipitation.Precipitation.Companion.millimeters
 import org.breezyweather.unit.pressure.Pressure.Companion.hectopascals
 import org.breezyweather.unit.ratio.Ratio.Companion.percent
@@ -103,11 +111,14 @@ class QWeatherService @Inject constructor(
 
         // QWeather location is "longitude,latitude" with up to 2 decimals
         val locationParam = "${formatCoord(location.longitude)},${formatCoord(location.latitude)}"
+        // Warning and air quality endpoints use /{lat}/{lon} path params (latitude first!)
+        val latParam = formatCoord(location.latitude)
+        val lonParam = formatCoord(location.longitude)
         val lang = getLangCode(context)
         val unit = "m"
         val failedFeatures = mutableMapOf<SourceFeature, Throwable>()
 
-        // QWeather requires separate endpoints for daily/hourly/now/minutely/warning.
+        // QWeather requires separate endpoints for daily/hourly/now/minutely/warning/airquality.
         // We only issue requests for requested features and aggregate failures.
         val now = if (SourceFeature.CURRENT in requestedFeatures) {
             mApi.getNow(apiKey, locationParam, lang, unit).onErrorResumeNext {
@@ -145,22 +156,31 @@ class QWeatherService @Inject constructor(
             Observable.just(QWeatherMinutelyResult())
         }
         val warning = if (SourceFeature.ALERT in requestedFeatures) {
-            mApi.getWarning(apiKey, locationParam, lang).onErrorResumeNext {
+            mApi.getWarning(latParam, lonParam, apiKey, lang).onErrorResumeNext {
                 failedFeatures[SourceFeature.ALERT] = it
                 Observable.just(QWeatherWarningResult())
             }
         } else {
             Observable.just(QWeatherWarningResult())
         }
+        val airQuality = if (SourceFeature.AIR_QUALITY in requestedFeatures) {
+            mApi.getAirQuality(latParam, lonParam, apiKey, lang).onErrorResumeNext {
+                failedFeatures[SourceFeature.AIR_QUALITY] = it
+                Observable.just(QWeatherAirQualityResult())
+            }
+        } else {
+            Observable.just(QWeatherAirQualityResult())
+        }
 
-        return Observable.zip(now, daily, hourly, minutely, warning) {
+        return Observable.zip(now, daily, hourly, minutely, warning, airQuality) {
                 nowResult: QWeatherNowResult,
                 dailyResult: QWeatherDailyResult,
                 hourlyResult: QWeatherHourlyResult,
                 minutelyResult: QWeatherMinutelyResult,
                 warningResult: QWeatherWarningResult,
+                airQualityResult: QWeatherAirQualityResult,
             ->
-            // QWeather returns code "200" on success; anything else means the call failed.
+            // QWeather v7 endpoints return code "200" on success; anything else means the call failed.
             // Surface as failedFeature if the response is not successful but didn't throw.
             if (nowResult.code != null && nowResult.code != "200" && SourceFeature.CURRENT in requestedFeatures) {
                 failedFeatures[SourceFeature.CURRENT] = IllegalStateException("QWeather code ${nowResult.code}")
@@ -178,9 +198,8 @@ class QWeatherService @Inject constructor(
             ) {
                 failedFeatures[SourceFeature.MINUTELY] = IllegalStateException("QWeather code ${minutelyResult.code}")
             }
-            if (warningResult.code != null && warningResult.code != "200" && SourceFeature.ALERT in requestedFeatures) {
-                failedFeatures[SourceFeature.ALERT] = IllegalStateException("QWeather code ${warningResult.code}")
-            }
+            // Warning and air quality endpoints (v1) don't return a "code" field.
+            // They return metadata.zeroResult on success. HTTP errors are caught by onErrorResumeNext.
 
             WeatherWrapper(
                 dailyForecast = if (SourceFeature.FORECAST in requestedFeatures) {
@@ -205,6 +224,11 @@ class QWeatherService @Inject constructor(
                 },
                 alertList = if (SourceFeature.ALERT in requestedFeatures) {
                     getAlertList(warningResult)
+                } else {
+                    null
+                },
+                airQuality = if (SourceFeature.AIR_QUALITY in requestedFeatures) {
+                    getAirQuality(airQualityResult)
                 } else {
                     null
                 },
@@ -322,29 +346,32 @@ class QWeatherService @Inject constructor(
     }
 
     private fun getAlertList(result: QWeatherWarningResult): List<Alert> {
-        val warningList = result.warning
-        if (warningList.isNullOrEmpty()) return emptyList()
-        return warningList
+        val alertList = result.alerts
+        if (alertList.isNullOrEmpty()) return emptyList()
+        return alertList
             .filter {
-                it.status == null || it.status.equals("active", ignoreCase = true) ||
-                    it.status.equals("update", ignoreCase = true)
+                // Exclude cancelled alerts; keep new/update/alert and null messageType
+                val messageTypeCode = it.messageType?.code
+                messageTypeCode == null ||
+                    !messageTypeCode.equals("cancel", ignoreCase = true)
             }
             .map { w ->
-                val severity = getAlertSeverity(w.severity, w.level)
+                val severity = getAlertSeverity(w.severity, w.color?.code)
                 Alert(
-                    alertId = w.id ?: Objects.hash(w.title, w.pubTime, w.type).toString(),
-                    startDate = parseIso8601(w.pubTime, null),
-                    endDate = parseIso8601(w.endTime, null),
-                    headline = w.title,
-                    description = w.text,
-                    source = w.sender,
+                    alertId = w.id ?: Objects.hash(w.headline, w.issuedTime, w.eventType?.name).toString(),
+                    startDate = parseIso8601(w.onsetTime ?: w.effectiveTime, null),
+                    endDate = parseIso8601(w.expireTime, null),
+                    headline = w.headline,
+                    description = w.description,
+                    instruction = w.instruction,
+                    source = w.senderName,
                     severity = severity,
-                    color = getAlertColor(w.severityColor) ?: Alert.colorFromSeverity(severity)
+                    color = getAlertColor(w.color) ?: Alert.colorFromSeverity(severity)
                 )
             }
     }
 
-    private fun getAlertSeverity(severity: String?, level: String?): AlertSeverity {
+    private fun getAlertSeverity(severity: String?, colorCode: String?): AlertSeverity {
         // severity field uses English terms (Minor/Moderate/Severe/Extreme)
         severity?.lowercase()?.let {
             when (it) {
@@ -354,29 +381,63 @@ class QWeatherService @Inject constructor(
                 "minor" -> return AlertSeverity.MINOR
             }
         }
-        // Fallback: level field uses Chinese (蓝/黄/橙/红)
-        level?.let {
+        // Fallback: color code (blue/yellow/orange/red) or Chinese color names
+        colorCode?.lowercase()?.let {
             when {
-                it.contains("红") -> return AlertSeverity.EXTREME
-                it.contains("橙") || it.contains("橘") -> return AlertSeverity.SEVERE
-                it.contains("黄") -> return AlertSeverity.MODERATE
-                it.contains("蓝") -> return AlertSeverity.MINOR
+                it.contains("red") || it.contains("红") -> return AlertSeverity.EXTREME
+                it.contains("orange") || it.contains("橙") || it.contains("橘") -> return AlertSeverity.SEVERE
+                it.contains("yellow") || it.contains("黄") -> return AlertSeverity.MODERATE
+                it.contains("blue") || it.contains("蓝") -> return AlertSeverity.MINOR
             }
         }
         return AlertSeverity.UNKNOWN
     }
 
     @ColorInt
-    private fun getAlertColor(severityColor: String?): Int? {
-        if (severityColor.isNullOrEmpty()) return null
-        // severityColor is an orange/red/yellow/blue string in Chinese
+    private fun getAlertColor(color: QWeatherWarningColor?): Int? {
+        if (color == null) return null
+        // Prefer explicit RGBA values from the API
+        if (color.red != null && color.green != null && color.blue != null) {
+            val alpha = ((color.alpha ?: 1f) * 255).toInt().coerceIn(0, 255)
+            return Color.argb(alpha, color.red, color.green, color.blue)
+        }
+        // Fallback: color code string
+        val code = color.code ?: return null
         return when {
-            severityColor.contains("红") || severityColor.equals("red", true) -> Color.rgb(215, 48, 42)
-            severityColor.contains("橙") || severityColor.contains("橘") ||
-                severityColor.equals("orange", true) -> Color.rgb(249, 138, 30)
-            severityColor.contains("黄") || severityColor.equals("yellow", true) -> Color.rgb(250, 237, 36)
-            severityColor.contains("蓝") || severityColor.equals("blue", true) -> Color.rgb(51, 100, 255)
+            code.contains("红", true) || code.equals("red", true) -> Color.rgb(215, 48, 42)
+            code.contains("橙", true) || code.contains("橘", true) ||
+                code.equals("orange", true) -> Color.rgb(249, 138, 30)
+            code.contains("黄", true) || code.equals("yellow", true) -> Color.rgb(250, 237, 36)
+            code.contains("蓝", true) || code.equals("blue", true) -> Color.rgb(51, 100, 255)
             else -> null
+        }
+    }
+
+    private fun getAirQuality(result: QWeatherAirQualityResult): AirQualityWrapper? {
+        val pollutants = result.pollutants
+        if (pollutants.isNullOrEmpty()) return null
+        val pollutantMap = pollutants.associateBy { it.code }
+        val current = AirQuality(
+            pM25 = getPollutantConcentration(pollutantMap["pm2p5"]),
+            pM10 = getPollutantConcentration(pollutantMap["pm10"]),
+            sO2 = getPollutantConcentration(pollutantMap["so2"]),
+            nO2 = getPollutantConcentration(pollutantMap["no2"]),
+            o3 = getPollutantConcentration(pollutantMap["o3"]),
+            cO = getPollutantConcentration(pollutantMap["co"])
+        )
+        return if (current.isValid) {
+            AirQualityWrapper(current = current)
+        } else {
+            null
+        }
+    }
+
+    private fun getPollutantConcentration(pollutant: QWeatherAirQualityPollutant?): PollutantConcentration? {
+        val value = pollutant?.concentration?.value ?: return null
+        val unit = pollutant.concentration?.unit ?: ""
+        return when {
+            unit.contains("mg", ignoreCase = true) -> (value * 1000).microgramsPerCubicMeter
+            else -> value.microgramsPerCubicMeter
         }
     }
 

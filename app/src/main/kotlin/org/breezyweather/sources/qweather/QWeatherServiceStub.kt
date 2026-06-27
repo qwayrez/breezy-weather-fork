@@ -45,7 +45,8 @@ abstract class QWeatherServiceStub :
         SourceFeature.FORECAST to weatherAttribution,
         SourceFeature.CURRENT to weatherAttribution,
         SourceFeature.MINUTELY to weatherAttribution,
-        SourceFeature.ALERT to weatherAttribution
+        SourceFeature.ALERT to weatherAttribution,
+        SourceFeature.AIR_QUALITY to weatherAttribution
     )
     override val attributionLinks = mapOf(
         weatherAttribution to "https://www.qweather.com/"

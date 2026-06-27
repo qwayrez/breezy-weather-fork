@@ -21,17 +21,42 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class QWeatherWarning(
     val id: String? = null,
-    val sender: String? = null,
-    val pubTime: String? = null,
-    val startTime: String? = null,
-    val endTime: String? = null,
-    val status: String? = null,
-    val level: String? = null,
+    val senderName: String? = null,
+    val issuedTime: String? = null,
+    val messageType: QWeatherWarningMessageType? = null,
+    val eventType: QWeatherWarningEventType? = null,
+    val urgency: String? = null,
     val severity: String? = null,
-    val severityColor: String? = null,
-    val adcode: String? = null,
-    val title: String? = null,
-    val text: String? = null,
-    val related: String? = null,
-    val type: String? = null,
+    val certainty: String? = null,
+    val icon: String? = null,
+    val color: QWeatherWarningColor? = null,
+    val effectiveTime: String? = null,
+    val onsetTime: String? = null,
+    val expireTime: String? = null,
+    val headline: String? = null,
+    val description: String? = null,
+    val criteria: String? = null,
+    val instruction: String? = null,
+    val responseTypes: List<String>? = null,
+)
+
+@Serializable
+data class QWeatherWarningMessageType(
+    val code: String? = null,
+    val supersedes: List<String>? = null,
+)
+
+@Serializable
+data class QWeatherWarningEventType(
+    val name: String? = null,
+    val code: String? = null,
+)
+
+@Serializable
+data class QWeatherWarningColor(
+    val code: String? = null,
+    val red: Int? = null,
+    val green: Int? = null,
+    val blue: Int? = null,
+    val alpha: Float? = null,
 )

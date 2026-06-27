@@ -20,7 +20,13 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class QWeatherWarningResult(
-    val code: String? = null,
-    val updateTime: String? = null,
-    val warning: List<QWeatherWarning>? = null,
+    val metadata: QWeatherWarningMetadata? = null,
+    val alerts: List<QWeatherWarning>? = null,
+)
+
+@Serializable
+data class QWeatherWarningMetadata(
+    val tag: String? = null,
+    val zeroResult: Boolean? = null,
+    val attributions: List<String>? = null,
 )

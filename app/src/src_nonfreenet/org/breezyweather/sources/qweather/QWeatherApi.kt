@@ -17,6 +17,7 @@
 package org.breezyweather.sources.qweather
 
 import io.reactivex.rxjava3.core.Observable
+import org.breezyweather.sources.qweather.json.QWeatherAirQualityResult
 import org.breezyweather.sources.qweather.json.QWeatherDailyResult
 import org.breezyweather.sources.qweather.json.QWeatherHourlyResult
 import org.breezyweather.sources.qweather.json.QWeatherMinutelyResult
@@ -35,6 +36,11 @@ import retrofit2.http.Query
  *
  * Default base URL is https://devapi.qweather.com/, but users can configure
  * a custom API Host (e.g. https://abcdefgh.qweatherapi.com/).
+ *
+ * Note: weather endpoints (now/daily/hourly/minutely) use the legacy `/v7/` paths
+ * with `location=longitude,latitude` query parameter.
+ * Warning and air quality endpoints use the new `/v1/` RESTful paths with
+ * `{latitude}/{longitude}` path parameters (latitude first!).
  */
 interface QWeatherApi {
 
@@ -71,10 +77,19 @@ interface QWeatherApi {
         @Query("lang") lang: String,
     ): Observable<QWeatherMinutelyResult>
 
-    @GET("v7/warning/now")
+    @GET("weatheralert/v1/current/{lat}/{lon}")
     fun getWarning(
+        @Path("lat") lat: String,
+        @Path("lon") lon: String,
         @Query("key") apiKey: String,
-        @Query("location") location: String,
         @Query("lang") lang: String,
     ): Observable<QWeatherWarningResult>
+
+    @GET("airquality/v1/current/{lat}/{lon}")
+    fun getAirQuality(
+        @Path("lat") lat: String,
+        @Path("lon") lon: String,
+        @Query("key") apiKey: String,
+        @Query("lang") lang: String,
+    ): Observable<QWeatherAirQualityResult>
 }
